@@ -1,5 +1,5 @@
 {
-    "name": "sketterz/laravel-repository",
+    "name": "skt-developer-007/laravel-repository",
     "description": "Laravel package to generate repository classes via artisan command",
     "type": "library",
     "autoload": {
