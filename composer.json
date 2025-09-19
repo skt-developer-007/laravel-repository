@@ -1,0 +1,21 @@
+{
+    "name": "sketterz/laravel-repository",
+    "description": "Laravel package to generate repository classes via artisan command",
+    "type": "library",
+    "autoload": {
+        "psr-4": {
+            "Sketterz\\RepositoryGenerator\\": "src/"
+        }
+    },
+    "require": {
+        "php": "^8.0",
+        "illuminate/support": "^10.0"
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Sketterz\\RepositoryGenerator\\ServiceProvider"
+            ]
+        }
+    }
+}
