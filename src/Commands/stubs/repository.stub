@@ -18,17 +18,17 @@ class DummyClass
 
     public function create($data)
     {
-        return $this->insert(new Model, $data);
+        return $this->valuable(new Model, $data);
     }
 
     public function update($id, $data)
     {
         $model = $this->find($id);
 
-        return $this->insert($model, $data);
+        return $this->valuable($model, $data);
     }
 
-    public function insert($model, $param = [])
+    public function valuable($model, $param = [])
     {
         $param = (object) $param;
 
