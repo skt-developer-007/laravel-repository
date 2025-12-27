@@ -24,16 +24,15 @@ class DummyClass
     public function update($id, $data)
     {
         $model = $this->find($id);
+    
+        if(!$model) return null; 
 
         return $this->valuable($model, $data);
     }
 
     public function valuable($model, $param = [])
     {
-        $param = (object) $param;
-
-        !isset($param->question) ?: $model->question = $param->question;
-
+        $model->fill((array)$param);
         $model->save();
 
         return $model;
