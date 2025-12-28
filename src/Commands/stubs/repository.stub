@@ -16,6 +16,11 @@ class DummyClass
         return Model::query()->find($id);
     }
 
+    public function findOrFail($id)
+    {
+        return Model::query()->findOrFail($id);
+    }
+
     public function create($data)
     {
         return $this->valuable(new Model, $data);
@@ -23,17 +28,88 @@ class DummyClass
 
     public function update($id, $data)
     {
-        $model = $this->find($id);
-    
-        if(!$model) return null; 
+        $model = $this->findOrFail($id);
 
         return $this->valuable($model, $data);
     }
 
-    public function valuable($model, $param = [])
+    public function valuable($model, $data = [])
     {
-        $model->fill((array)$param);
+        $model->fill((array)$data);
         $model->save();
+
+        return $model;
+    }
+
+    public function getPaginate($params, $settings = [], $scope = null)
+    {
+        $query = Model::query();
+
+        $selectFields = $settings['select'] ?? ['*'];
+        if (!in_array('id', $selectFields) && $selectFields !== ['*']) $selectFields[] = 'id';
+
+        $query->select($selectFields);
+
+        if (!empty($settings['with'])) $query->with($settings['with']);
+
+        if ($scope instanceof \Closure) $scope($query);
+
+        $search = $params['search'] ?? null;
+        if ($search) {
+            $query->where(function ($groupQ) use ($search, $settings) {
+                if (!empty($settings['search_fields'])) {
+                    foreach ($settings['search_fields'] as $index => $field) {
+
+                        if (str_contains($field, '.')) {
+                            $lastDot  = strrpos($field, '.');
+                            $relation = substr($field, 0, $lastDot);
+                            $col      = substr($field, $lastDot + 1);
+
+                            $groupQ->orWhereHas($relation, function ($sub) use ($col, $search) {
+                                $sub->where($col, 'LIKE', "%{$search}%");
+                            });
+                        } else $groupQ->orWhere($field, 'LIKE', "%{$search}%");
+                    }
+                }
+
+                if (isset($settings['search_custom']) && is_callable($settings['search_custom'])) {
+                    $settings['search_custom']($groupQ, $search);
+                }
+            });
+        }
+
+        $status = $params['status'] ?? null;
+        if ($status !== 'all') $query->where('status', $status);
+
+        $sortBy = $params['sort_by'] ?? 'id';
+        $sortDir = $params['sort_dir'] ?? 'desc';
+
+        $query->orderBy($sortBy, $sortDir);
+
+        $size = (int)($params['size'] ?? 10);
+        $paginator = $query->paginate($size);
+
+        $paginator->through(function ($item) {
+            $item->hash = encodeHashids($item->id);
+            return $item;
+        });
+
+        return [
+            'status'       => true,
+            'data'         => $paginator->items(),
+            'total'        => $paginator->total(),
+            'current_page' => $paginator->currentPage(),
+            'last_page'    => $paginator->lastPage(),
+        ];
+    }
+
+    public function delete($id)
+    {
+        $model = $this->findOrFail($id);
+
+        $model->status = -1;
+        $model->save();
+        $model->delete();
 
         return $model;
     }
