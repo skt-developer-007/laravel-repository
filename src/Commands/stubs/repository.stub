@@ -43,50 +43,93 @@ class DummyClass
 
     public function getPaginate($params, $settings = [], $scope = null)
     {
-        $query = Model::query();
+        $query = Activity::query();
+        $model = $query->getModel();
+        $mainTable = $model->getTable();
 
-        $selectFields = $settings['select'] ?? ['*'];
-        if (!in_array('id', $selectFields) && $selectFields !== ['*']) $selectFields[] = 'id';
+        $selectFields = $settings['select'] ?? ["$mainTable.*"];
+
+        if (!in_array("$mainTable.*", $selectFields) && !in_array('*', $selectFields)) {
+            foreach ($selectFields as $key => $field) {
+                if (!str_contains($field, '.')) {
+                    $selectFields[$key] = "$mainTable.$field";
+                }
+            }
+        }
 
         $query->select($selectFields);
 
-        if (!empty($settings['with'])) $query->with($settings['with']);
+        if (!empty($settings['with'])) {
+            $withRelations = [];
+            foreach ($settings['with'] as $key => $value) {
+                if (is_string($key) && is_array($value)) {
+                    $withRelations[$key] = function ($q) use ($value) {
+                        $q->select($value);
+                    };
+                } else {
+                    $withRelations[$key] = $value;
+                }
+            }
+            $query->with($withRelations);
+        }
 
-        if ($scope instanceof \Closure) $scope($query);
+        if ($scope instanceof \Closure) {
+            $scope($query);
+        }
 
         $search = $params['search'] ?? null;
         if ($search) {
             $query->where(function ($groupQ) use ($search, $settings) {
                 if (!empty($settings['search_fields'])) {
-                    foreach ($settings['search_fields'] as $index => $field) {
-
+                    foreach ($settings['search_fields'] as $field) {
                         if (str_contains($field, '.')) {
-                            $lastDot  = strrpos($field, '.');
-                            $relation = substr($field, 0, $lastDot);
-                            $col      = substr($field, $lastDot + 1);
+                            [$relation, $col] = explode('.', $field, 2);
 
                             $groupQ->orWhereHas($relation, function ($sub) use ($col, $search) {
                                 $sub->where($col, 'LIKE', "%{$search}%");
                             });
-                        } else $groupQ->orWhere($field, 'LIKE', "%{$search}%");
+                        } else {
+                            $groupQ->orWhere($groupQ->getModel()->getTable() . '.' . $field, 'LIKE', "%{$search}%");
+                        }
                     }
                 }
-
                 if (isset($settings['search_custom']) && is_callable($settings['search_custom'])) {
                     $settings['search_custom']($groupQ, $search);
                 }
             });
         }
 
-        $status = $params['status'] ?? null;
-        if ($status !== 'all') $query->where('status', $status);
-
         $sortBy = $params['sort_by'] ?? 'id';
-        $sortDir = $params['sort_dir'] ?? 'desc';
+        $sortDir = strtolower($params['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
 
-        $query->orderBy($sortBy, $sortDir);
+        if (str_contains($sortBy, '.')) {
+            [$relationName, $relationColumn] = explode('.', $sortBy, 2);
+
+            if (method_exists($model, $relationName)) {
+                $relation = $model->$relationName();
+
+                if (method_exists($relation, 'getRelated')) {
+                    $relatedModel = $relation->getRelated();
+                    $relatedTable = $relatedModel->getTable();
+
+                    if ($relation instanceof \Illuminate\Database\Eloquent\Relations\BelongsTo) {
+                        $foreignKey = $relation->getForeignKeyName();
+                        $ownerKey = $relation->getOwnerKeyName();
+
+                        if (!$query->getQuery()->joins || !collect($query->getQuery()->joins)->contains('table', $relatedTable)) {
+                            $query->leftJoin($relatedTable, "$mainTable.$foreignKey", '=', "$relatedTable.$ownerKey");
+                        }
+                    }
+                    $query->orderBy("$relatedTable.$relationColumn", $sortDir);
+                }
+            }
+        } else {
+            $query->orderBy("$mainTable.$sortBy", $sortDir);
+        }
 
         $size = (int)($params['size'] ?? 10);
+        $size = min($size, 100);
+
         $paginator = $query->paginate($size);
 
         $paginator->through(function ($item) {
@@ -100,6 +143,8 @@ class DummyClass
             'total'        => $paginator->total(),
             'current_page' => $paginator->currentPage(),
             'last_page'    => $paginator->lastPage(),
+            'from'         => $paginator->firstItem(),
+            'to'           => $paginator->lastItem(),
         ];
     }
 
