@@ -124,6 +124,9 @@ class DummyClass
         } else {
             $query->orderBy("$mainTable.$sortBy", $sortDir);
         }
+
+        $status = $params['status'] ?? 1;
+        if ($status !== '-1') $query->where('status', $status);
     
         $size = (int)($params['size'] ?? 10);
         $size = min($size, 100);
