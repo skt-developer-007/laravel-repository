@@ -29,7 +29,6 @@ class DummyClass
     public function update($id, $data)
     {
         $model = $this->findOrFail($id);
-
         return $this->valuable($model, $data);
     }
 
@@ -37,18 +36,17 @@ class DummyClass
     {
         $model->fill((array)$data);
         $model->save();
-
         return $model;
     }
 
     public function getPaginate($params, $settings = [], $scope = null)
     {
-        $query = Activity::query();
+        $query = Model::query();
         $model = $query->getModel();
         $mainTable = $model->getTable();
-
+    
         $selectFields = $settings['select'] ?? ["$mainTable.*"];
-
+    
         if (!in_array("$mainTable.*", $selectFields) && !in_array('*', $selectFields)) {
             foreach ($selectFields as $key => $field) {
                 if (!str_contains($field, '.')) {
@@ -56,9 +54,9 @@ class DummyClass
                 }
             }
         }
-
+    
         $query->select($selectFields);
-
+    
         if (!empty($settings['with'])) {
             $withRelations = [];
             foreach ($settings['with'] as $key => $value) {
@@ -72,11 +70,11 @@ class DummyClass
             }
             $query->with($withRelations);
         }
-
+    
         if ($scope instanceof \Closure) {
             $scope($query);
         }
-
+    
         $search = $params['search'] ?? null;
         if ($search) {
             $query->where(function ($groupQ) use ($search, $settings) {
@@ -84,7 +82,7 @@ class DummyClass
                     foreach ($settings['search_fields'] as $field) {
                         if (str_contains($field, '.')) {
                             [$relation, $col] = explode('.', $field, 2);
-
+    
                             $groupQ->orWhereHas($relation, function ($sub) use ($col, $search) {
                                 $sub->where($col, 'LIKE', "%{$search}%");
                             });
@@ -98,24 +96,24 @@ class DummyClass
                 }
             });
         }
-
+    
         $sortBy = $params['sort_by'] ?? 'id';
         $sortDir = strtolower($params['sort_dir'] ?? 'desc') === 'asc' ? 'asc' : 'desc';
-
+    
         if (str_contains($sortBy, '.')) {
             [$relationName, $relationColumn] = explode('.', $sortBy, 2);
-
+    
             if (method_exists($model, $relationName)) {
                 $relation = $model->$relationName();
-
+    
                 if (method_exists($relation, 'getRelated')) {
                     $relatedModel = $relation->getRelated();
                     $relatedTable = $relatedModel->getTable();
-
+    
                     if ($relation instanceof \Illuminate\Database\Eloquent\Relations\BelongsTo) {
                         $foreignKey = $relation->getForeignKeyName();
                         $ownerKey = $relation->getOwnerKeyName();
-
+    
                         if (!$query->getQuery()->joins || !collect($query->getQuery()->joins)->contains('table', $relatedTable)) {
                             $query->leftJoin($relatedTable, "$mainTable.$foreignKey", '=', "$relatedTable.$ownerKey");
                         }
@@ -126,25 +124,75 @@ class DummyClass
         } else {
             $query->orderBy("$mainTable.$sortBy", $sortDir);
         }
-
+    
         $size = (int)($params['size'] ?? 10);
         $size = min($size, 100);
-
+    
         $paginator = $query->paginate($size);
-
-        $paginator->through(function ($item) {
-            $item->hash = encodeHashids($item->id);
+    
+        $hashIdFields = null;
+        if (!empty($settings['hash_id_fields']) && is_array($settings['hash_id_fields'])) {
+            $hashIdFields = array_values($settings['hash_id_fields']);
+        }
+    
+        $excludeIdFields = null;
+        if (!empty($settings['exclude_id_fields']) && is_array($settings['exclude_id_fields'])) {
+            $excludeIdFields = array_values($settings['exclude_id_fields']);
+        }
+    
+        $paginator->through(function ($item) use ($hashIdFields, $excludeIdFields) {
+            $process = function ($entity) use (&$process, $hashIdFields, $excludeIdFields) {
+                if ($entity instanceof \Illuminate\Database\Eloquent\Model) {
+                    if (!is_null($entity->getAttribute('id'))) {
+                        $entity->setAttribute('hash', encodeHashids($entity->getAttribute('id')));
+                        $entity->makeHidden('id');
+                    }
+    
+                    foreach ($entity->getAttributes() as $attr => $value) {
+                        if (str_ends_with($attr, '_id')) {
+                            $shouldExclude = is_array($excludeIdFields) ? in_array($attr, $excludeIdFields, true) : false;
+    
+                            if ($shouldExclude) {
+                                $entity->makeHidden($attr);
+                                continue;
+                            }
+                        }
+    
+                        if ($value === null) {
+                            continue;
+                        }
+    
+                        if (str_ends_with($attr, '_id')) {
+                            $shouldHash = is_array($hashIdFields) ? in_array($attr, $hashIdFields, true) : false;
+                            if ($shouldHash) {
+                                $hashField = $attr . '_hash';
+                                $entity->setAttribute($hashField, encodeHashids($value));
+                                $entity->makeHidden($attr);
+                            }
+                        }
+                    }
+    
+                    foreach ($entity->getRelations() as $rel) {
+                        $process($rel);
+                    }
+                } elseif ($entity instanceof \Illuminate\Support\Collection || $entity instanceof \Illuminate\Database\Eloquent\Collection) {
+                    $entity->each(function ($m) use ($process) {
+                        $process($m);
+                    });
+                }
+            };
+    
+            $process($item);
+    
             return $item;
         });
-
+    
         return [
             'status'       => true,
             'data'         => $paginator->items(),
             'total'        => $paginator->total(),
             'current_page' => $paginator->currentPage(),
             'last_page'    => $paginator->lastPage(),
-            'from'         => $paginator->firstItem(),
-            'to'           => $paginator->lastItem(),
         ];
     }
 
